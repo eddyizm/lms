@@ -32,6 +32,8 @@
 #include "core/Random.hpp"
 #include "core/Service.hpp"
 #include "core/SystemPaths.hpp"
+
+#include "audio/MusicNNEmbeddings.hpp"
 #include "database/IDb.hpp"
 #include "database/Session.hpp"
 #include "database/objects/Artist.hpp"
@@ -44,6 +46,7 @@
 #include "database/objects/TrackArtistLink.hpp"
 #include "database/objects/TrackEmbeddedImage.hpp"
 #include "database/objects/TrackEmbeddedImageLink.hpp"
+#include "database/objects/TrackMusicNNEmbeddings.hpp"
 
 namespace lms
 {
@@ -59,6 +62,7 @@ namespace lms
         std::size_t trackEmbeddedImagePerRelease{ 1 }; // usual case: one same image saved on each track
         std::size_t genreCount{ 50 };
         std::size_t moodCount{ 25 };
+        bool generateMusicNNEmbeddings{ false };
         std::filesystem::path trackPath;
     };
 
@@ -131,6 +135,18 @@ namespace lms
             if (!context.moods.empty())
                 clusters.push_back(*core::random::pickRandom(context.moods));
             track.modify()->setClusters(clusters);
+
+            if (params.generateMusicNNEmbeddings)
+            {
+                audio::TrackMusicNNEmbeddings embeddings;
+                std::normal_distribution<float> embeddingDist{ 0.0F, 1.0F };
+                for (auto& v : embeddings.mean.values)
+                    v = embeddingDist(core::random::getRandGenerator());
+                std::vector<std::byte> blob(sizeof(audio::TrackMusicNNEmbeddings));
+                audio::trackMusicNNEmbeddingsToBlob(embeddings, blob);
+                TrackMusicNNEmbeddings::pointer entry{ context.session.create<TrackMusicNNEmbeddings>(track) };
+                entry.modify()->setData(blob);
+            }
         }
     }
 
@@ -204,7 +220,9 @@ int main(int argc, char* argv[])
         ("genre-count", program_options::value<unsigned>()->default_value(defaultParams.genreCount), "Number of genres to generate")
         ("genre-count-per-track", program_options::value<unsigned>()->default_value(defaultParams.genreCountPerTrack), "Number of genres to assign to each track")
         ("mood-count", program_options::value<unsigned>()->default_value(defaultParams.moodCount), "Number of moods to generate")
-        ("mood-count-per-track", program_options::value<unsigned>()->default_value(defaultParams.moodCountPerTrack), "Number of moods to assign to each track")("help,h", "produce help message");
+        ("mood-count-per-track", program_options::value<unsigned>()->default_value(defaultParams.moodCountPerTrack), "Number of moods to assign to each track")
+        ("musicnn-embeddings", program_options::bool_switch()->default_value(false), "Generate fake MusicNN embeddings for each track")
+        ("help,h", "produce help message");
         // clang-format on
 
         program_options::variables_map vm;
@@ -226,6 +244,7 @@ int main(int argc, char* argv[])
         genParams.trackCountPerRelease = vm["track-count-per-release"].as<unsigned>();
         genParams.compilationRatio = vm["compilation-ratio"].as<float>();
         genParams.trackEmbeddedImagePerRelease = vm["track-embedded-image-count"].as<unsigned>();
+        genParams.generateMusicNNEmbeddings = vm["musicnn-embeddings"].as<bool>();
         genParams.trackPath = std::filesystem::path{ vm["track-path"].as<std::string>() };
 
         if (!std::filesystem::exists(genParams.trackPath))
@@ -234,6 +253,10 @@ int main(int argc, char* argv[])
         core::Service<core::IConfig> config{ core::createConfig(vm["conf"].as<std::string>()) };
         auto db{ db::createDb(config->getPath("working-dir", "/var/lms") / "lms.db") };
         db::Session session{ *db };
+        session.prepareTablesIfNeeded();
+        session.migrateSchemaIfNeeded();
+        session.createIndexesIfNeeded();
+
         std::cout << "Starting generation..." << std::endl;
 
         GenerationContext genContext{ session };
