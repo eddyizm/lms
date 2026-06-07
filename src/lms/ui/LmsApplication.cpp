@@ -19,6 +19,8 @@
 
 #include "LmsApplication.hpp"
 
+#include <Wt/WConfig.h>
+
 #include <Wt/WAnchor.h>
 #include <Wt/WEnvironment.h>
 #include <Wt/WLineEdit.h>
@@ -117,7 +119,7 @@ namespace lms::ui
             return res;
         }
 
-        Wt::WLocale createLocale(const std::string& name)
+        Wt::WLocale createLocale(const std::string& name, [[maybe_unused]] const std::string& timeZoneName)
         {
             Wt::WLocale locale{ name };
             locale.setDecimalPoint(Wt::WString::tr("Lms.locale.decimal-point").toUTF8());
@@ -126,6 +128,19 @@ namespace lms::ui
             locale.setTimeFormat(Wt::WString::tr("Lms.locale.time-format").toUTF8());
             locale.setDateTimeFormat(Wt::WString::tr("Lms.locale.date-time-format").toUTF8());
 
+#ifdef WT_DATE_TZ_USE_STD
+            if (!timeZoneName.empty())
+            {
+                try
+                {
+                    locale.setTimeZone(std::chrono::locate_zone(timeZoneName));
+                }
+                catch (const std::runtime_error&)
+                {
+                    // unknown zone, display stays UTC
+                }
+            }
+#endif
             return locale;
         }
 
@@ -224,7 +239,7 @@ namespace lms::ui
 
         setTitle();
         setLocalizedStrings(getOrCreateMessageBundle());
-        setLocale(createLocale(Wt::WLocale::currentLocale().name()));
+        setLocale(createLocale(Wt::WLocale::currentLocale().name(), environment().timeZoneName()));
 
         // Handle Media Scanner events and other session events
         enableUpdates(true);
@@ -325,7 +340,7 @@ namespace lms::ui
 
         setUserInfo(userId, strongAuth);
 
-        LMS_LOG(UI, INFO, "User '" << getUserLoginName() << "' logged in from '" << environment().clientAddress() << "', user agent = " << environment().userAgent() << ", locale = '" << locale().name() << "'");
+        LMS_LOG(UI, INFO, "User '" << getUserLoginName() << "' logged in from '" << environment().clientAddress() << "', user agent = " << environment().userAgent() << ", locale = '" << locale().name() << "', timezone = '" << environment().timeZoneName() << "'");
 
         _appManager.registerApplication(*this);
         _appManager.applicationRegistered.connect(this, [this](LmsApplication& otherApplication) {
