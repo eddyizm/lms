@@ -31,7 +31,6 @@
 
 #include "core/ILogger.hpp"
 #include "core/ITraceLogger.hpp"
-#include "core/Random.hpp"
 
 #include "database/IDb.hpp"
 #include "database/Session.hpp"
@@ -682,20 +681,26 @@ namespace lms::recommendation
         LMS_SCOPED_TRACE_DETAILED("AudioSimilarityEngine", "computeTrackDistanceThreshold");
 
         constexpr std::size_t maxSampleCount{ 500 };
+        constexpr std::size_t maxCandidateCount{ 10'000 };
         constexpr float stdDevMultiplier{ 2.F };
 
-        const std::size_t sampleCount{ std::min(_trackVectors.size(), maxSampleCount) };
-
-        LOG(INFO, "computing track distance threshold using " << sampleCount << " samples...");
-
-        // Collect all vector pointers and shuffle for an unbiased random sample.
         std::vector<const ReducedVector*> allVectors;
         allVectors.reserve(_trackVectors.size());
         for (const auto& [id, vec] : _trackVectors)
             allVectors.push_back(vec);
 
+        // move maxCandidateCount random elements to the front
+        const std::size_t candidateCount{ std::min(allVectors.size(), maxCandidateCount) };
         std::minstd_rand randomEngine{ 42 };
-        core::random::shuffleContainer(randomEngine, allVectors);
+        for (std::size_t i{}; i < candidateCount; ++i)
+        {
+            std::uniform_int_distribution<std::size_t> dist{ i, allVectors.size() - 1 };
+            std::swap(allVectors[i], allVectors[dist(randomEngine)]);
+        }
+        allVectors.resize(candidateCount);
+
+        const std::size_t sampleCount{ std::min(candidateCount, maxSampleCount) };
+        LOG(INFO, "computing track distance threshold using " << sampleCount << " samples on " << candidateCount << " candidates...");
 
         math::StatsAccumulator<FloatType> stats;
         for (std::size_t i{}; i < sampleCount; ++i)
@@ -714,7 +719,8 @@ namespace lms::recommendation
                     minDist = d;
             }
 
-            stats.add(minDist);
+            if (minDist < std::numeric_limits<FloatType>::max())
+                stats.add(minDist);
         }
 
         if (stats.getCount() >= 2)
@@ -731,7 +737,7 @@ namespace lms::recommendation
         LMS_SCOPED_TRACE_DETAILED("AudioSimilarityEngine", "ComputeReleaseDistanceThreshold");
 
         constexpr std::size_t maxSampleCount{ 200 };
-        constexpr std::size_t maxCandidateCount{ 1'000 };
+        constexpr std::size_t maxCandidateCount{ 2'000 };
         constexpr float stdDevMultiplier{ 2.F };
         using CosineDistance = math::NormalizedCosineDistance<ReducedVector::getSize(), FloatType>;
 
@@ -784,7 +790,7 @@ namespace lms::recommendation
         LMS_SCOPED_TRACE_DETAILED("AudioSimilarityEngine", "ComputeArtistDistanceThreshold");
 
         constexpr std::size_t maxSampleCount{ 200 };
-        constexpr std::size_t maxCandidateCount{ 1'000 };
+        constexpr std::size_t maxCandidateCount{ 2'000 };
         constexpr float stdDevMultiplier{ 2.F };
         using CosineDistance = math::NormalizedCosineDistance<ReducedVector::getSize(), FloatType>;
 
