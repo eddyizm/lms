@@ -64,21 +64,27 @@ namespace lms::recommendation
 {
     namespace detail
     {
+        struct TrackNeighbor
+        {
+            db::TrackId id;
+            float distance{};
+        };
+
         template<typename ReducedVector>
-        TrackResults findNearestNeighbors(
+        std::vector<TrackNeighbor> findNearestNeighbors(
             const ReducedVector& queryVector, // expected to be normalized
             const std::unordered_map<db::TrackId, const ReducedVector*>& trackVectors,
             std::size_t maxNeighbors,
-            db::TrackId excludeTrackId)
+            std::span<const db::TrackId> excludeTrackIds)
         {
             const math::NormalizedCosineDistance distFunc{ queryVector };
 
-            TrackResults neighbors;
+            std::vector<TrackNeighbor> neighbors;
             neighbors.reserve(trackVectors.size());
 
             for (const auto& [trackId, trackVector] : trackVectors)
             {
-                if (trackId == excludeTrackId)
+                if (std::find(std::cbegin(excludeTrackIds), std::cend(excludeTrackIds), trackId) != std::cend(excludeTrackIds))
                     continue;
 
                 neighbors.push_back({ .id = trackId, .distance = distFunc(*trackVector) });
@@ -186,27 +192,10 @@ namespace lms::recommendation
             return res;
 
         const ReducedVector& queryVector{ *medoidCalculator.finalize() };
-        const math::NormalizedCosineDistance distFunc{ queryVector };
-
-        using Distance = float;
-        std::vector<std::pair<db::TrackId, Distance>> rankedTracks;
-        rankedTracks.reserve(_trackVectors.size());
-
-        for (const auto& [trackId, vectors] : _trackVectors)
-        {
-            if (std::find(std::cbegin(tracksId), std::cend(tracksId), trackId) != std::cend(tracksId))
-                continue;
-
-            rankedTracks.emplace_back(trackId, distFunc(*vectors));
-        }
 
         // Oversample to give the diversity selection enough candidates to work with
         static constexpr std::size_t oversamplingFactor{ 5 };
-        const std::size_t candidateCount{ std::min(maxCount * oversamplingFactor, rankedTracks.size()) };
-        std::partial_sort(std::begin(rankedTracks), std::next(std::begin(rankedTracks), static_cast<std::ptrdiff_t>(candidateCount)), std::end(rankedTracks), [](const auto& lhs, const auto& rhs) {
-            return lhs.second < rhs.second;
-        });
-        rankedTracks.resize(candidateCount);
+        auto rankedTracks{ detail::findNearestNeighbors(queryVector, _trackVectors, maxCount * oversamplingFactor, tracksId) };
 
         // Greedy selection: at each step pick the candidate with the lowest penalized score.
         // Pre-seed selectedTracks with the input tracks so that soft constraints (same release,
@@ -216,6 +205,17 @@ namespace lms::recommendation
         selectedTracks.reserve(selectedTracks.size() + maxCount);
         res.reserve(maxCount);
 
+        const ReducedVector* prevVector{ nullptr };
+        for (auto it{ tracksId.rbegin() }; it != tracksId.rend(); ++it)
+        {
+            const auto found{ _trackVectors.find(*it) };
+            if (found != _trackVectors.cend())
+            {
+                prevVector = found->second;
+                break;
+            }
+        }
+
         while (res.size() < maxCount && !rankedTracks.empty())
         {
             std::optional<std::size_t> bestIdx;
@@ -223,7 +223,7 @@ namespace lms::recommendation
 
             for (std::size_t i{}; i < rankedTracks.size(); ++i)
             {
-                const db::TrackId candidateId{ rankedTracks[i].first };
+                const db::TrackId candidateId{ rankedTracks[i].id };
 
                 const TrackCandidateContext context{
                     .candidateTrackId = candidateId,
@@ -246,8 +246,11 @@ namespace lms::recommendation
                 break;
 
             const auto& [selectedId, distanceToQuery]{ rankedTracks[*bestIdx] };
-            res.push_back({ .id = selectedId, .distance = distanceToQuery });
+            const auto* selectedVector{ _trackVectors.at(selectedId) };
+            const float distanceToPrev{ prevVector ? math::NormalizedCosineDistance{ *prevVector }(*selectedVector) : distanceToQuery };
+            res.push_back({ .id = selectedId, .distanceToFirst = distanceToQuery, .distanceToPrevious = distanceToPrev });
             selectedTracks.push_back(selectedId);
+            prevVector = selectedVector;
             rankedTracks.erase(std::begin(rankedTracks) + static_cast<std::ptrdiff_t>(*bestIdx));
         }
 
@@ -284,17 +287,17 @@ namespace lms::recommendation
             auto queryPoint{ startVector + direction * t };
             queryPoint.normalizeL2();
 
-            const auto neighbors{ detail::findNearestNeighbors(queryPoint, _trackVectors, NeighborCount, endTrackId) };
+            const auto neighbors{ detail::findNearestNeighbors(queryPoint, _trackVectors, NeighborCount, std::span<const db::TrackId>{ &endTrackId, 1 }) };
             const db::TrackId stepSeedTrackId{ neighbors.empty() ? startTrackId : neighbors[0].id };
             const std::array<db::TrackId, 1> stepSeedTrackIds{ stepSeedTrackId };
 
             std::optional<db::TrackId> best;
             float bestScore{ std::numeric_limits<float>::max() };
 
-            for (const auto& [candidateTrackId, candidateDistance] : neighbors)
+            for (const auto& neighbor : neighbors)
             {
                 const TrackCandidateContext context{
-                    .candidateTrackId = candidateTrackId,
+                    .candidateTrackId = neighbor.id,
                     .selectedTracks = path,
                     .seedTrackIds = stepSeedTrackIds,
                 };
@@ -306,7 +309,7 @@ namespace lms::recommendation
                 if (score < bestScore)
                 {
                     bestScore = score;
-                    best = candidateTrackId;
+                    best = neighbor.id;
                 }
             }
 
@@ -323,10 +326,14 @@ namespace lms::recommendation
         results.reserve(path.size());
 
         const math::NormalizedCosineDistance startDistFunc{ startVector };
+        const ReducedVector* prevVector{ &startVector };
         for (const db::TrackId trackId : path)
         {
             const auto* trackVector{ _trackVectors.at(trackId) };
-            results.push_back({ .id = trackId, .distance = startDistFunc(*trackVector) });
+            const float distToFirst{ startDistFunc(*trackVector) };
+            const float distToPrev{ math::NormalizedCosineDistance{ *prevVector }(*trackVector) };
+            results.push_back({ .id = trackId, .distanceToFirst = distToFirst, .distanceToPrevious = distToPrev });
+            prevVector = trackVector;
         }
 
         return results;
@@ -384,7 +391,7 @@ namespace lms::recommendation
 
         res.reserve(resultCount);
         for (std::size_t i{}; i < resultCount; ++i)
-            res.push_back({ .id = rankedReleases[i].first, .distance = rankedReleases[i].second });
+            res.push_back({ .id = rankedReleases[i].first, .distanceToFirst = rankedReleases[i].second });
 
         return res;
     }
@@ -444,7 +451,7 @@ namespace lms::recommendation
 
         res.reserve(resultCount);
         for (std::size_t i{}; i < resultCount; ++i)
-            res.push_back({ .id = rankedArtists[i].first, .distance = rankedArtists[i].second });
+            res.push_back({ .id = rankedArtists[i].first, .distanceToFirst = rankedArtists[i].second });
 
         return res;
     }

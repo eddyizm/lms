@@ -696,7 +696,7 @@ namespace lms::api::subsonic
             if (track)
             {
                 Response::Node& sonicMatchNode{ response.createArrayNode("sonicMatch") };
-                sonicMatchNode.setAttribute("similarity", 1.0F - similarTrack.distance);
+                sonicMatchNode.setAttribute("similarity", 1.0F - similarTrack.distanceToFirst);
                 sonicMatchNode.addChild("entry", createSongNode(context, track, context.getUser()));
             }
         }
@@ -727,7 +727,7 @@ namespace lms::api::subsonic
             if (track)
             {
                 Response::Node& sonicMatchNode{ response.createArrayNode("sonicMatch") };
-                sonicMatchNode.setAttribute("similarity", 1.0F - pathTrack.distance);
+                sonicMatchNode.setAttribute("similarity", 1.0F - pathTrack.distanceToFirst);
                 sonicMatchNode.addChild("entry", createSongNode(context, track, context.getUser()));
             }
         }

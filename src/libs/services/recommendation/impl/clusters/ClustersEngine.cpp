@@ -86,7 +86,7 @@ namespace lms::recommendation
             ResultContainer<IdType> res;
             res.reserve(resultCount);
             for (std::size_t i{}; i < resultCount; ++i)
-                res.push_back({ .id = overlapCounts[i].first, .distance = {} });
+                res.push_back({ .id = overlapCounts[i].first, .distanceToFirst = {}, .distanceToPrevious = {} });
 
             return res;
         }
@@ -295,7 +295,7 @@ namespace lms::recommendation
             if (!bestIdx)
                 break;
 
-            res.push_back({ .id = candidates[*bestIdx], .distance = {} });
+            res.push_back({ .id = candidates[*bestIdx], .distanceToFirst = {}, .distanceToPrevious = {} });
             selectedTracks.push_back(candidates[*bestIdx]);
             candidates.erase(std::begin(candidates) + static_cast<std::ptrdiff_t>(*bestIdx));
         }
@@ -364,7 +364,7 @@ namespace lms::recommendation
             return {};
 
         if (startTrackId == endTrackId)
-            return { RecommendationResult<db::TrackId>{ .id = startTrackId, .distance = {} } };
+            return { RecommendationResult<db::TrackId>{ .id = startTrackId, .distanceToFirst = {}, .distanceToPrevious = {} } };
 
         db::Session& dbSession{ _db.getTLSSession() };
         auto transaction{ dbSession.createReadTransaction() };
@@ -376,9 +376,9 @@ namespace lms::recommendation
 
         TrackResults res;
         res.reserve(std::min<std::size_t>(maxCount, 2));
-        res.push_back({ .id = startTrackId, .distance = {} });
+        res.push_back({ .id = startTrackId, .distanceToFirst = {}, .distanceToPrevious = {} });
         if (maxCount > 1)
-            res.push_back({ .id = endTrackId, .distance = {} });
+            res.push_back({ .id = endTrackId, .distanceToFirst = {}, .distanceToPrevious = {} });
 
         return res;
     }
