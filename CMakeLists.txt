@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 
-project(lms VERSION 3.74.0)
+project(lms VERSION 3.76.0)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake/modules/)
 
@@ -21,7 +21,6 @@ endif()
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-find_package(Filesystem REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options iostreams)
 find_package(Wt REQUIRED COMPONENTS Wt Dbo DboSqlite3 HTTP)
 find_package(Pugixml CONFIG REQUIRED)
@@ -50,9 +49,7 @@ if (BUILD_BENCHMARKS)
 	message(STATUS "Building benchmarks")
 endif()
 
-if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_definitions(-DNDEBUG)
-endif()
+add_compile_definitions($<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 
 add_subdirectory(src)
 
@@ -61,4 +58,3 @@ install(DIRECTORY docroot DESTINATION share/lms)
 install(FILES conf/systemd/default.service DESTINATION share/lms)
 install(FILES conf/pam/lms DESTINATION share/lms)
 install(FILES conf/lms.conf DESTINATION share/lms)
-

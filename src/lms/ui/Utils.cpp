@@ -26,6 +26,7 @@
 #include <Wt/WAnchor.h>
 #include <Wt/WText.h>
 
+#include "core/String.hpp"
 #include "database/Session.hpp"
 #include "database/objects/Artist.hpp"
 #include "database/objects/Cluster.hpp"
@@ -130,7 +131,7 @@ namespace lms::ui::utils
 
     std::unique_ptr<Wt::WInteractWidget> createFilter(const Wt::WString& name, const Wt::WString& tooltip, std::string_view colorStyleClass, bool canDelete)
     {
-        auto res{ std::make_unique<Wt::WText>(Wt::WString{ canDelete ? "<i class=\"fa fa-times-circle\"></i> " : "" } + name, Wt::TextFormat::UnsafeXHTML) };
+        auto res{ std::make_unique<Wt::WText>(Wt::WString{ canDelete ? "<i class=\"fa fa-times-circle\"></i> " : "" } + name, Wt::TextFormat::XHTML) };
 
         res->setStyleClass("Lms-badge-cluster badge me-1 " + std::string{ colorStyleClass }); // HACK
         res->setToolTip(tooltip, Wt::TextFormat::Plain);
@@ -288,7 +289,7 @@ namespace lms::ui::utils
 
             if (trackArtists.size() > 1)
                 res.displayName = Wt::WString::tr("Lms.Explore.various-artists").toUTF8();
-            else
+            else if (trackArtists.size() == 1)
                 res.entries.emplace_back(ArtistDisplayInfo::Entry{ .displayName = std::string{ trackArtists[0]->getName() }, .artist = trackArtists[0] });
         }
 
@@ -407,17 +408,17 @@ namespace lms::ui::utils
             });
         };
 
-        addArtists(db::TrackArtistLinkType::Composer, "Lms.Explore.Artists.composer");
-        addArtists(db::TrackArtistLinkType::Conductor, "Lms.Explore.Artists.conductor");
-        addArtists(db::TrackArtistLinkType::Lyricist, "Lms.Explore.Artists.lyricist");
-        addArtists(db::TrackArtistLinkType::Mixer, "Lms.Explore.Artists.mixer");
-        addArtists(db::TrackArtistLinkType::Remixer, "Lms.Explore.Artists.remixer");
-        addArtists(db::TrackArtistLinkType::Producer, "Lms.Explore.Artists.producer");
+        addArtists(db::TrackArtistLinkType::Composer, "Lms.Explore.composer");
+        addArtists(db::TrackArtistLinkType::Conductor, "Lms.Explore.conductor");
+        addArtists(db::TrackArtistLinkType::Lyricist, "Lms.Explore.lyricist");
+        addArtists(db::TrackArtistLinkType::Mixer, "Lms.Explore.mixer");
+        addArtists(db::TrackArtistLinkType::Remixer, "Lms.Explore.remixer");
+        addArtists(db::TrackArtistLinkType::Producer, "Lms.Explore.producer");
         addPerformerArtists();
 
         if (!rolelessPerformers.empty())
         {
-            Wt::WString performersStr{ Wt::WString::trn("Lms.Explore.Artists.performer", rolelessPerformers.size()) };
+            Wt::WString performersStr{ Wt::WString::trn("Lms.Explore.performer", rolelessPerformers.size()) };
             artistMap[performersStr] = std::move(rolelessPerformers);
         }
 
@@ -458,20 +459,52 @@ namespace lms::ui::utils
             });
         };
 
-        addArtists(db::TrackArtistLinkType::Composer, "Lms.Explore.Artists.composer");
-        addArtists(db::TrackArtistLinkType::Conductor, "Lms.Explore.Artists.conductor");
-        addArtists(db::TrackArtistLinkType::Lyricist, "Lms.Explore.Artists.lyricist");
-        addArtists(db::TrackArtistLinkType::Mixer, "Lms.Explore.Artists.mixer");
-        addArtists(db::TrackArtistLinkType::Remixer, "Lms.Explore.Artists.remixer");
-        addArtists(db::TrackArtistLinkType::Producer, "Lms.Explore.Artists.producer");
+        addArtists(db::TrackArtistLinkType::Composer, "Lms.Explore.composer");
+        addArtists(db::TrackArtistLinkType::Conductor, "Lms.Explore.conductor");
+        addArtists(db::TrackArtistLinkType::Lyricist, "Lms.Explore.lyricist");
+        addArtists(db::TrackArtistLinkType::Mixer, "Lms.Explore.mixer");
+        addArtists(db::TrackArtistLinkType::Remixer, "Lms.Explore.remixer");
+        addArtists(db::TrackArtistLinkType::Producer, "Lms.Explore.producer");
         addPerformerArtists();
 
         if (!rolelessPerformers.empty())
         {
-            Wt::WString performersStr{ Wt::WString::trn("Lms.Explore.Artists.performer", rolelessPerformers.size()) };
+            Wt::WString performersStr{ Wt::WString::trn("Lms.Explore.performer", rolelessPerformers.size()) };
             artistMap[performersStr] = std::move(rolelessPerformers);
         }
 
         return artistMap;
+    }
+
+    std::unique_ptr<Wt::WInteractWidget> createCopyright(std::string_view copyright, std::string_view copyrightURL)
+    {
+        std::unique_ptr<Wt::WInteractWidget> res;
+
+        if (copyright.empty() && copyrightURL.empty())
+            return res;
+
+        if (copyright.empty() && !copyrightURL.empty())
+            copyright = copyrightURL;
+
+        if (!copyrightURL.empty())
+        {
+            Wt::WLink link{ std::string{ copyrightURL } };
+            link.setTarget(Wt::LinkTarget::NewWindow);
+
+            auto anchor{ std::make_unique<Wt::WAnchor>(link) };
+            anchor->setTextFormat(Wt::TextFormat::Plain);
+            anchor->setText(Wt::WString::fromUTF8(std::string{ copyright }));
+
+            res = std::move(anchor);
+        }
+        else
+            res = std::make_unique<Wt::WText>(Wt::WString::fromUTF8(std::string{ copyright }), Wt::TextFormat::Plain);
+
+        return res;
+    }
+
+    void copyToClipboard(std::string_view text)
+    {
+        LmsApp->doJavaScript("navigator.clipboard.writeText('" + core::stringUtils::jsEscape(text) + "').catch(function(){})");
     }
 } // namespace lms::ui::utils

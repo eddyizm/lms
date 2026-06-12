@@ -73,6 +73,7 @@ namespace lms::db
                 || params.sortMethod == ReleaseSortMethod::OriginalDateDesc
                 || params.writtenAfter.isValid()
                 || params.dateRange
+                || params.originalDateRange
                 || params.trackArtist.isValid()
                 || params.filters.clusters.size() == 1
                 || params.filters.mediaLibrary.isValid()
@@ -120,8 +121,16 @@ namespace lms::db
 
             if (params.dateRange)
             {
+                assert(!params.originalDateRange);
                 query.where("CAST(SUBSTR(t.date, 1, 4) AS INTEGER) >= ?").bind(params.dateRange->begin);
                 query.where("CAST(SUBSTR(t.date, 1, 4) AS INTEGER) <= ?").bind(params.dateRange->end);
+            }
+
+            if (params.originalDateRange)
+            {
+                assert(!params.dateRange);
+                query.where("CAST(SUBSTR(COALESCE(t.original_date, t.date), 1, 4) AS INTEGER) >= ?").bind(params.originalDateRange->begin);
+                query.where("CAST(SUBSTR(COALESCE(t.original_date, t.date), 1, 4) AS INTEGER) <= ?").bind(params.originalDateRange->end);
             }
 
             if (!params.name.empty())
@@ -633,13 +642,20 @@ namespace lms::db
         return *year;
     }
 
+    bool Release::hasVariousCopyrights() const
+    {
+        assert(session());
+
+        return utils::fetchQuerySingleResult(session()->query<int>("SELECT COUNT(DISTINCT copyright) FROM track t").where("t.release_id = ?").bind(getId())) > 1;
+    }
+
     std::optional<std::string> Release::getCopyright() const
     {
         assert(session());
 
         auto query{ session()->query<std::string>("SELECT copyright FROM track t INNER JOIN release r ON r.id = t.release_id").where("r.id = ?").groupBy("copyright").bind(getId()) };
 
-        const auto copyrights{ utils::fetchQueryResults(query) };
+        auto copyrights{ utils::fetchQueryResults(query) };
 
         // various copyrights => no copyright
         if (copyrights.empty() || copyrights.size() > 1 || copyrights.front().empty())
@@ -654,7 +670,7 @@ namespace lms::db
 
         const auto query{ session()->query<std::string>("SELECT copyright_url FROM track t INNER JOIN release r ON r.id = t.release_id").where("r.id = ?").bind(getId()).groupBy("copyright_url") };
 
-        const auto copyrights{ utils::fetchQueryResults(query) };
+        auto copyrights{ utils::fetchQueryResults(query) };
 
         // various copyright URLs => no copyright URL
         if (copyrights.empty() || copyrights.size() > 1 || copyrights.front().empty())
@@ -731,33 +747,6 @@ namespace lms::db
 
         const auto query{ createTrackArtistQuery<ArtistId>(*session(), "a.id", getId(), linkType) };
         return utils::fetchQueryResults(query);
-    }
-
-    std::vector<Release::pointer> Release::getSimilarReleases(std::optional<std::size_t> offset, std::optional<std::size_t> count) const
-    {
-        assert(session());
-
-        // Select the similar releases using the 5 most used clusters of the release
-        auto query{ session()->query<Wt::Dbo::ptr<Release>>(
-                                 "SELECT r FROM release r"
-                                 " INNER JOIN track t ON t.release_id = r.id"
-                                 " INNER JOIN track_cluster t_c ON t_c.track_id = t.id"
-                                 " WHERE "
-                                 " t_c.cluster_id IN "
-                                 "(SELECT DISTINCT c.id FROM cluster c"
-                                 " INNER JOIN track t ON c.id = t_c.cluster_id"
-                                 " INNER JOIN track_cluster t_c ON t_c.track_id = t.id"
-                                 " INNER JOIN release r ON r.id = t.release_id"
-                                 " WHERE r.id = ?)"
-                                 " AND r.id <> ?")
-                        .bind(getId())
-                        .bind(getId())
-                        .groupBy("r.id")
-                        .orderBy("COUNT(*) DESC, RANDOM()")
-                        .limit(count ? static_cast<int>(*count) : -1)
-                        .offset(offset ? static_cast<int>(*offset) : -1) };
-
-        return utils::fetchQueryResults<Release::pointer>(query);
     }
 
     ObjectPtr<Artwork> Release::getPreferredArtwork() const
